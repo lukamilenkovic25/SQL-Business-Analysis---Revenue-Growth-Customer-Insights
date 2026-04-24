@@ -1,0 +1,360 @@
+/* =========================================================
+   HYBRID SQL BUSINESS ANALYSIS
+   Dataset: Customers, Products, Orders, Order Items
+   Author: Luka Milenkovic
+   ========================================================= */
+
+/* STEP 1 - MONTHLY REVENUE TREND */
+
+SELECT
+    strftime('%Y-%m', o.order_date) AS order_month,
+    SUM(oi.revenue) AS total_revenue
+FROM orders o
+JOIN order_items oi
+    ON o.order_id = oi.order_id
+WHERE o.order_status = 'Completed'
+GROUP BY order_month
+ORDER BY order_month;
+
+/* STEP 2 - CUSTOMER REVENUE & PARETO */
+
+WITH customer_revenue AS (
+    SELECT
+        c.customer_id,
+        c.customer_name,
+        c.segment,
+        SUM(oi.revenue) AS total_revenue
+    FROM customers c
+    JOIN orders o
+        ON c.customer_id = o.customer_id
+    JOIN order_items oi
+        ON o.order_id = oi.order_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY
+        c.customer_id,
+        c.customer_name,
+        c.segment
+),
+ranked_customers AS (
+    SELECT
+        customer_id,
+        customer_name,
+        segment,
+        total_revenue,
+        SUM(total_revenue) OVER () AS overall_revenue,
+        SUM(total_revenue) OVER (
+            ORDER BY total_revenue DESC
+        ) AS cumulative_revenue
+    FROM customer_revenue
+)
+SELECT
+    customer_id,
+    customer_name,
+    segment,
+    total_revenue,
+    ROUND(cumulative_revenue * 1.0 / overall_revenue, 4) AS cumulative_share
+FROM ranked_customers
+ORDER BY total_revenue DESC;
+
+/* STEP 3 - YEAR OVER YEAR REVENUE GROWTH 
+3.1. Monthly Revenue Base */
+
+WITH monthly_revenue AS (
+    SELECT
+        strftime('%Y-%m', o.order_date) AS order_month,
+        SUM(oi.revenue) AS monthly_revenue
+    FROM orders o
+    JOIN order_items oi
+        ON o.order_id = oi.order_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY order_month
+)
+SELECT *
+FROM monthly_revenue
+ORDER BY order_month;
+
+/* STEP 3 - YEAR OVER YEAR REVENUE GROWTH 
+3.2. YoY Growth Calculation */
+
+WITH monthly_revenue AS (
+    SELECT
+        strftime('%Y-%m', o.order_date) AS order_month,
+        SUM(oi.revenue) AS revenue
+    FROM orders o
+    JOIN order_items oi
+        ON o.order_id = oi.order_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY order_month
+),
+yoy_revenue AS (
+ SELECT
+        curr.order_month,
+        curr.revenue AS revenue_current,
+        prev.revenue AS revenue_previous,
+        ROUND(curr.revenue - prev.revenue, 2) AS yoy_change,
+        ROUND(
+            (curr.revenue - prev.revenue) * 1.0 / prev.revenue,
+            4
+        ) AS yoy_growth_pct
+    FROM monthly_revenue curr
+    JOIN monthly_revenue prev
+        ON curr.order_month =
+           strftime('%Y-%m',
+               date(prev.order_month || '-01', '+1 year')
+           )
+)
+SELECT *
+FROM yoy_revenue
+ORDER BY order_month;
+
+/* STEP 4 - PRODUCT YoY DRIVERS 
+4.1 - Product Yearly Revenue */
+
+WITH product_yearly_revenue AS (
+    SELECT
+        p.product_id,
+        p.product_name,
+        CAST(strftime('%Y', o.order_date) AS INTEGER) AS order_year,
+        SUM(oi.revenue) AS yearly_revenue
+    FROM order_items oi
+    JOIN orders o
+        ON oi.order_id = o.order_id
+    JOIN products p
+        ON oi.product_id = p.product_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY
+        p.product_id,
+        p.product_name,
+        order_year
+)
+SELECT *
+FROM product_yearly_revenue
+ORDER BY product_name, order_year;
+
+/* STEP 4 - PRODUCT YoY DRIVERS 
+4.2 - Product YoY Change */
+
+WITH product_yearly_revenue AS (
+    SELECT
+        p.product_id,
+        p.product_name,
+        CAST(strftime('%Y', o.order_date) AS INTEGER) AS order_year,
+        SUM(oi.revenue) AS yearly_revenue
+    FROM order_items oi
+    JOIN orders o
+        ON oi.order_id = o.order_id
+    JOIN products p
+        ON oi.product_id = p.product_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY
+        p.product_id,
+        p.product_name,
+        order_year
+),
+product_yoy AS (
+    SELECT
+        curr.product_id,
+        curr.product_name,
+        curr.order_year AS year_current,
+        curr.yearly_revenue AS revenue_current,
+        prev.yearly_revenue AS revenue_previous,
+        ROUND(curr.yearly_revenue - prev.yearly_revenue, 2) AS yoy_change,
+        ROUND(
+            (curr.yearly_revenue - prev.yearly_revenue) * 1.0
+            / prev.yearly_revenue,
+            4
+        ) AS yoy_growth_pct
+    FROM product_yearly_revenue curr
+    JOIN product_yearly_revenue prev
+        ON curr.product_id = prev.product_id
+       AND curr.order_year = prev.order_year + 1
+)
+SELECT *
+FROM product_yoy
+ORDER BY yoy_change DESC;
+
+/* STEP 4 - PRODUCT YoY DRIVERS 
+4.3 -  Top 10 Products - Growth Drivers */
+
+WITH product_yearly_revenue AS (
+    SELECT
+        p.product_id,
+        p.product_name,
+        CAST(strftime('%Y', o.order_date) AS INTEGER) AS order_year,
+        SUM(oi.revenue) AS yearly_revenue
+    FROM order_items oi
+    JOIN orders o
+        ON oi.order_id = o.order_id
+    JOIN products p
+        ON oi.product_id = p.product_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY
+        p.product_id,
+        p.product_name,
+        order_year
+),
+product_yoy AS (
+    SELECT
+        curr.product_id,
+        curr.product_name,
+        curr.order_year AS year_current,
+        curr.yearly_revenue AS revenue_current,
+        prev.yearly_revenue AS revenue_previous,
+        ROUND(curr.yearly_revenue - prev.yearly_revenue, 2) AS yoy_change,
+        ROUND(
+            (curr.yearly_revenue - prev.yearly_revenue) * 1.0
+            / prev.yearly_revenue,
+            4
+        ) AS yoy_growth_pct
+    FROM product_yearly_revenue curr
+    JOIN product_yearly_revenue prev
+        ON curr.product_id = prev.product_id
+       AND curr.order_year = prev.order_year + 1
+)
+SELECT *
+FROM product_yoy
+ORDER BY yoy_change DESC
+LIMIT 10;
+
+/* STEP 4 - PRODUCT YoY DRIVERS 
+4.4 -  Top 10 Products - YoY Decline Drivers */
+
+WITH product_yearly_revenue AS (
+    SELECT
+        p.product_id,
+        p.product_name,
+        CAST(strftime('%Y', o.order_date) AS INTEGER) AS order_year,
+        SUM(oi.revenue) AS yearly_revenue
+    FROM order_items oi
+    JOIN orders o
+        ON oi.order_id = o.order_id
+    JOIN products p
+        ON oi.product_id = p.product_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY
+        p.product_id,
+        p.product_name,
+        order_year
+),
+product_yoy AS (
+    SELECT
+        curr.product_id,
+        curr.product_name,
+        curr.order_year AS year_current,
+        curr.yearly_revenue AS revenue_current,
+        prev.yearly_revenue AS revenue_previous,
+        ROUND(curr.yearly_revenue - prev.yearly_revenue, 2) AS yoy_change,
+        ROUND(
+            (curr.yearly_revenue - prev.yearly_revenue) * 1.0
+            / prev.yearly_revenue,
+            4
+        ) AS yoy_growth_pct
+    FROM product_yearly_revenue curr
+    JOIN product_yearly_revenue prev
+        ON curr.product_id = prev.product_id
+       AND curr.order_year = prev.order_year + 1
+)
+SELECT *
+FROM product_yoy
+ORDER BY yoy_change ASC
+LIMIT 10;
+
+/* STEP 5 – Customer Retention & Repeat Behavior 
+5.1 - Orders per Customer */
+
+WITH customer_orders AS (
+    SELECT
+        c.customer_id,
+        c.customer_name,
+        COUNT(DISTINCT o.order_id) AS order_count
+    FROM customers c
+    JOIN orders o
+        ON c.customer_id = o.customer_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY
+        c.customer_id,
+        c.customer_name
+)
+SELECT *
+FROM customer_orders
+ORDER BY order_count DESC;
+
+/* STEP 5 – Customer Retention & Repeat Behavior 
+5.2 - Classify Customers */
+
+WITH customer_orders AS (
+    SELECT
+        c.customer_id,
+        c.customer_name,
+        COUNT(DISTINCT o.order_id) AS order_count
+    FROM customers c
+    JOIN orders o
+        ON c.customer_id = o.customer_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY
+        c.customer_id,
+        c.customer_name
+)
+SELECT
+    customer_id,
+    customer_name,
+    order_count,
+    CASE
+        WHEN order_count = 1 THEN 'One-Time Buyer'
+        ELSE 'Repeat Customer'
+    END AS customer_type
+FROM customer_orders
+ORDER BY order_count DESC;
+
+/* STEP 5 – Customer Retention & Repeat Behavior 
+5.3 - Retention Summary */
+
+WITH customer_orders AS (
+    SELECT
+        c.customer_id,
+        COUNT(DISTINCT o.order_id) AS order_count
+    FROM customers c
+    JOIN orders o
+        ON c.customer_id = o.customer_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY c.customer_id
+)
+SELECT
+    COUNT(customer_id) AS total_customers,
+    SUM(CASE WHEN order_count = 1 THEN 1 ELSE 0 END) AS one_time_customers,
+    SUM(CASE WHEN order_count > 1 THEN 1 ELSE 0 END) AS repeat_customers,
+    ROUND(
+        SUM(CASE WHEN order_count > 1 THEN 1 ELSE 0 END) * 1.0
+        / COUNT(customer_id),
+        4
+    ) AS repeat_customer_rate
+FROM customer_orders;
+
+/* STEP 5 – Customer Retention & Repeat Behavior 
+5.4 - Retention by Segment */
+
+WITH customer_orders AS (
+    SELECT
+        c.customer_id,
+        c.segment,
+        COUNT(DISTINCT o.order_id) AS order_count
+    FROM customers c
+    JOIN orders o
+        ON c.customer_id = o.customer_id
+    WHERE o.order_status = 'Completed'
+    GROUP BY
+        c.customer_id,
+        c.segment
+)
+SELECT
+    segment,
+    COUNT(customer_id) AS total_customers,
+    SUM(CASE WHEN order_count > 1 THEN 1 ELSE 0 END) AS repeat_customers,
+    ROUND(
+        SUM(CASE WHEN order_count > 1 THEN 1 ELSE 0 END) * 1.0
+        / COUNT(customer_id),
+        4
+    ) AS repeat_customer_rate
+FROM customer_orders
+GROUP BY segment
+ORDER BY repeat_customer_rate DESC;

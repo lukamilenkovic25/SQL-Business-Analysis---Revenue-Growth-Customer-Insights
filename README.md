@@ -1,4 +1,4 @@
-# SQL-Business-Analysis---Revenue-Growth-Customer-Insights
+# SQL_Business_Analysis-Revenue_Growth_Customer_Insights
 
 ## Project Overview
 This project presents a comprehensive SQL‑based business analysis designed to answer real‑world commercial questions using transactional data. The analysis focuses on revenue performance, year‑over‑year growth, customer concentration, product drivers, and customer retention. All queries are written using SQLite‑compatible SQL, demonstrating the ability to adapt enterprise‑level analytics logic to different SQL dialects.
